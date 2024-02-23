@@ -1,0 +1,255 @@
+---
+bibliography: references.bib
+output:
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+# Set chunk options for knitr to display code and output
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r libraries, echo=FALSE, include=FALSE, eval=TRUE, warning=FALSE}
+# Load the data from the 'qmnist_nist' saved RData file
+load(file = "qmnist_nist.RData")
+
+# Load the required libraries
+library(glmnet)
+library(ggplot2)
+```
+
+## Exercise 1.
+
+This task involves working with digit recognition data, specifically the `train_nist` and `test_nist` datasets, which contain images of digits. Both datasets contain three variables: `digit` which is the variable we want to predict, `px` which is our predictor variable on the form of a dataframe and `writer` which is a mere id number that we are not going to use.
+
+```{r visual, echo=FALSE, eval=FALSE}
+# Define a function named 'show_digit' that takes parameters:
+#   - x: vector of pixel values representing an image
+#   - col: color palette for displaying the image
+show_digit = function(x, col = gray(255:1 / 255), ...) {
+  
+  # Calculate the length of the vector x and take its square root
+  l = sqrt(length(x))
+  
+  # Create an image from the pixel values:
+  #   - Convert the vector x to a matrix with l rows
+  #   - Reverse the order of columns (l:1) to display it correctly
+  #   - Display the image using the provided color palette
+  image(matrix(as.numeric(x), nrow = l)[, l:1], col = col, ...)
+}
+
+# Select the index of the image to be displayed (10th image)
+i = 10
+
+# Call the 'show_digit' function with the pixel values of the 10th image from the 'train_nist' dataset
+show_digit(x = train_nist$px[i, ])
+
+# Display the digit corresponding to the 10th image from the 'train_nist' dataset
+train_nist$digit[i]
+```
+
+Firstly, we filter the `train_nist` dataframe to obtain the index of the observations with value 4 and 9 in the variable `digit`. Afterwards, we create a dataframe `X_train49` taking those observations in the predictor variable (feature) `px` and we create a vector containing those same observations of the target variable `digit` (the variable we want to predict later on). Then, we change our `X_train49` from a dataframe to a matrix. Finally, we set the label of the levels of the variable `digit` to be 0 and 1 for easier computation.
+
+In summary, we have processed our data so that we end up having a matrix with the predictor variables and a vector with target variable which is the one that we wanna predict. We are going to train a model and afterwards we are going to use it by plugging in observations of which we have the values in the predictor variables but not on the target variable `digit`. With the model we are going to predict that value and then, doing this in many observations, we are going to compute the accuracy of our predictions to see how good our model is.
+
+```{r traindata, echo=FALSE, eval=TRUE}
+# Filter the 'digit' variable in the 'train_nist' dataset to include only observations with digits 4 and 9
+train49 = train_nist$digit %in% c(4, 9)
+
+# Extract predictors (pixel values) corresponding to digits 4 and 9
+X_train49 = train_nist$px[train49, ]
+
+# Extract target variable for digits 4 and 9
+y_train49 = train_nist$digit[train49]
+
+# Convert predictor matrix to class 'matrix'
+X_train49 = as.matrix(X_train49)
+
+# Convert target variable:
+#   - If the digit is 4, set it to 1
+#   - If the digit is 9, set it to 0
+y_train49 = ifelse(y_train49 == "4", 1, 0)
+```
+
+## Exercise 2.
+
+We now proceeded to fit a ridge logistic regression model with penalty term `lambda` to the transformed data. Ridge regression is a regularization technique used to prevent overfitting in linear regression models by penalizing large coefficient values. We choose to use ridge logistic regression due to its ability to handle binary classification tasks effectively. Additionally, the "ridge" part of the method helps prevent overfitting, which can occur when the model becomes too complex and learns noise in the data rather than meaningful patterns. Let's see in more detail what this technique does.
+
+Logistic regression is a statistical model used for binary classification tasks, where the aim is to predict the probability of a certain outcome (in our case: '4' or '9'). Moreover, ridge regression is a technique used to mitigate the problem of multicollinearity (high correlation between the features) by adding a penalty term.
+
+In addition, cross-validation is a technique used to assess the performance of a model by splitting the data into multiple subsets, training the model on a portion of the data (training set) and evaluating it on the remaining portion (validation). This process is done as many times as subsets we make and the errors are averaged across all the iterations. We choose cross-validation becuase it is essential to ensure that our model doesn't just memorize the training data but learns to recognize digits in general. By testing the model on different subsets of the data, we can get a more accurate estimate of its performance on unseen data. 
+
+This ridge logistic regression model with cross-validation is an approach that helps build a more stable and reliable predictive model.
+
+```{r cvridge, eval=FALSE, echo=FALSE}
+# Set a seed for reproducibility to ensure consistent results when running the code
+set.seed(42)
+
+# Fit a ridge regression model with cross-validation to obtain the penalty parameter lambda, which is used to penalize the magnitude of coefficients to prevent overfitting
+cv_model = cv.glmnet(x = X_train49,    # Predictor matrix (pixel values)
+                     y = y_train49,    # Target variable (binary: 0's and 1's)
+                     alpha = 0,        # Set alpha to 0 for ridge regression
+                     family = "binomial",  # Binomial family for logistic regression
+                     nfolds = 10,      # Number of folds for cross-validation (equivalent to number of subsets made)
+                     standardize = FALSE)  # Don't standardize predictor variables
+
+# Extract the optimal lambda (the one that minimizes the cross-validation error)
+optimal_lambda = cv_model$lambda.min
+
+# Print the optimal lambda
+cat("Optimal lambda:", optimal_lambda, "\n")
+```   
+
+After fitting this model, we extract the optimal `lamdba`, which is the one that minimizes the cross-validation error. We can check this in the plot where we see that logarithm of the `lambda` that minimizes the error, so if we take the exponential of that value we can check that it is the same as that of our `optimal_lambda`.
+
+```{r lamdba, eval=FALSE, echo=FALSE}
+# In this plot we can see the logarithm of the lambda than minimizes that error and, if we take the exponential, we obtain the desired lambda.
+
+# Extract the lambda values and corresponding mean cross-validated error
+lambda_values <- log(cv_model$lambda)
+cv_errors <- cv_model$cvm
+
+# Create a data frame for plotting, combining lambda values and CV errors
+plot_data <- data.frame(lambda = lambda_values, cv_error = cv_errors)
+
+# Plot the relationship between log(lambda) and cross-validated error using ggplot2
+ggplot(plot_data, aes(x = lambda, y = cv_error)) +  # Set x as log(lambda) and y as CV error
+  geom_line(color = "blue") +  # Add a line plot of the data
+  geom_point(color = "red") +  # Add points to represent each lambda-CV_error pair
+  labs(x = "log(lambda)", y = "cv_error",  # Set axis labels and plot title
+       title = "log(lambda) vs. cv_error") +
+  theme_minimal() +  # Set a minimal theme
+  theme(plot.title = element_text(hjust = 0.5))  # Center the plot title
+
+```
+
+Afterwards, we fit (train) the final ridge logistic regression model with the optimal lambda to obtain our trained model `final_model`, which is the one we are going to use to predict the value in the variable `digit` in new observations from the `test_nist` dataset.
+
+```{r finalmodel, echo=FALSE, eval=TRUE}
+# Fit the final ridge logistic regression model using the optimal lambda value obtained from cross-validation
+final_model = glmnet(X_train49,                # Predictor matrix (pixel values)
+                     y_train49,                # Target variable (binary: 0's and 1's)
+                     alpha = 0,                # Set alpha to 0 for ridge regression
+                     lambda = 21.97585,        # Use the optimal lambda value obtained from cross-validation
+                     family = "binomial",      # Use binomial family for logistic regression
+                     standardize = FALSE)      # Don't standardize predictor variables
+```
+
+One thing to notice is that we do not standardize the predictors because ridge regression is invariant to scaling of predictors, as it only shrinks the coefficients towards zero without affecting their relative importance. Standardization is not necessary for ridge regression since the penalty term effectively handles differences in predictor scales. Since standardizing the predictors doesn't affect the interpretation or performance of the ridge regression model, I skip it to save computation time and complexity.
+
+## Exercise 3.
+
+```{r plotcoeff, fig.dim = c(5, 2), eval=TRUE, echo=FALSE}
+# Obtain the coefficients of the final model using the optimal lambda value
+coefficients <- as.vector(predict(final_model, type = "coefficients", s = 21.97585))[-1]
+
+# Create a data frame containing coefficients and their corresponding indices
+coefficients_df <- data.frame(coef = coefficients, index = seq_along(coefficients))
+
+# Plot the coefficients of the model
+ggplot(coefficients_df, aes(x = index, y = coef)) +  # Set x as index and y as coefficient
+  geom_point() +  # Add points to represent each coefficient
+  labs(x = NULL, y = NULL,  # Remove axis labels
+       title  = "Coefficients of the model") +  # Set plot title
+  theme_minimal() +  # Set a minimal theme
+  theme(plot.title = element_text(hjust = 0.5))  # Center the plot title
+```
+
+To gain insights into the classification process, we plotted the estimated coefficients of the model. We do this because by examining the coefficient plot, we can gain insights into which parts of the digit images are most informative for the classification task. This information can help us understand how the model makes its predictions and potentially identify important features for future improvements.
+
+This visualization allowed us to observe which pixel features were most influential in distinguishing between digits 4 and 9. We can see that of all of the numerous coefficients we have, most of them are '0' and the rest of them very close to it, between -0.006 and 0.006. This tells us that the majority of the features (pixels) do not significantly contribute to the classification of the digits.
+
+## Exercise 4.
+
+Finally, we evaluated the prediction accuracy of the fitted model using the `test_nist` dataset. Firstly, we prepare the data and, afterwards, we make our predictions using our `final_model`. Then, we compute the corresponding labels in the response variable to be able to compare them to the true labels to compute the accuracy, which we do by computing the mean of the observations well classified. This provided us with a quantitative measure (97.80%, very high) of how well our model performed in classifying unseen data.
+
+It is important to compute the prediction accuracy because it serves as a crucial metric for assessing the performance of our model. It tells us how well our model generalizes to unseen data and provides valuable feedback on its effectiveness in real-world applications.
+
+```{r testpred, echo=FALSE, eval=TRUE, include=FALSE}
+# Filter the test data for digits 4 and 9
+test_data <- test_nist$digit %in% c(4, 9)
+X_test49 <- test_nist$px[test_data, ]  # Extract predictors (pixel values)
+X_test49 <- as.matrix(X_test49)        # Convert predictor matrix to class 'matrix'
+y_test49 <- test_nist$digit[test_data] # Extract target variable
+
+# Convert target variable:
+#   - If the digit is 4, set it to 1
+#   - If the digit is 9, set it to 0
+y_test49 <- ifelse(y_test49 == "4", 1, 0)
+
+# Make predictions using the final model on the test data
+predictions <- predict(final_model, newx = X_test49, type = "response")
+
+# Convert predicted probabilities to binary labels based on a threshold of 0.5
+predicted_labels <- ifelse(predictions > 0.5, "1", "0")
+
+# Calculate the prediction accuracy by comparing predicted labels with true labels
+accuracy_predictions <- mean(predicted_labels == y_test49)
+
+# Print the prediction accuracy
+cat("Prediction Accuracy:", accuracy_predictions)
+```
+
+## Exercise 5.
+
+In this exercise, we repeat the process of the whole task inside two loops, so we compute the accuracy for every pair of possible digits. We store this accuracies in a 10x10 matrix and we see that they all are between 97.22% and 100% (really high).
+
+```{r optional, eval=FALSE, echo=FALSE}
+# Create a list of the possible digits to iterate over
+digits <- 0:9
+
+# Create a matrix to store accuracy values for each pair of digits
+acc_mat <- matrix(NA, nrow = 10, ncol = 10, dimnames = list(as.character(digits), as.character(digits)))
+
+# Iterate over each pair of digits
+for (i in digits) {
+  for (j in digits) {
+    if (i < j) {
+      
+      # Filter train and test data for current pair of digits
+      train_data <- train_nist[train_nist$digit %in% c(i, j), ]
+      test_data <- test_nist[test_nist$digit %in% c(i, j), ]
+      
+      # Extract predictor and target variables from train and test data
+      X_train <- as.matrix(train_data$px)
+      y_train <- as.numeric(train_data$digit == j)
+      X_test <- as.matrix(test_data$px)
+      y_test <- as.numeric(test_data$digit == j)
+      
+      # Perform ridge logistic regression with cross-validation
+      cv_fit <- cv.glmnet(X_train, y_train, alpha = 0, family = "binomial", standardize = FALSE, nfolds = 3)
+      
+      # Obtain predictions with the optimal lambda and store accuracy in the matrix
+      predictions <- predict(cv_fit, newx = X_test, s = "lambda.min", type = "response")
+      class_predictions <- ifelse(predictions > 0.5, 1, 0)
+      accuracy <- mean(class_predictions == y_test)
+      acc_mat[as.character(i), as.character(j)] <- accuracy
+      acc_mat[as.character(j), as.character(i)] <- accuracy
+    }
+  }
+  
+  # Diagonal elements of the matrix are set to 1
+  acc_mat[as.character(i), as.character(i)] <- 1
+}
+```
+
+```{r optionalmatrix, echo=FALSE, eval=FALSE}
+# Define the accuracy matrix from the previous code chunk
+acc_mat <- matrix(c(1, 0.9995407, 0.9925422, 0.9937769, 0.9973571, 0.9891079, 0.9931395, 0.9974579, 0.9934598, 0.9963648,
+                    0.9995407, 1, 0.9979857, 0.9971006, 0.9985804, 0.9968699, 0.9992197, 0.9975684, 0.9900031, 0.9977911,
+                    0.9925422, 0.9979857, 1, 0.9783487, 0.9894578, 0.9872064, 0.9899073, 0.9930824, 0.9819477, 0.9889521,
+                    0.9937769, 0.9971006, 0.9783487, 1, 0.9970370, 0.9745047, 0.9980466, 0.9927158, 0.9722992, 0.9912728,
+                    0.9973571, 0.9985804, 0.9894578, 0.9970370, 1, 0.9937411, 0.9947723, 0.9942642, 0.9935854, 0.9784983,
+                    0.9891079, 0.9968699, 0.9872064, 0.9745047, 0.9937411, 1, 0.9895760, 0.9969136, 0.9761231, 0.9923077,
+                    0.9931395, 0.9992197, 0.9899073, 0.9980466, 0.9947723, 0.9895760, 1, 0.9996759, 0.9941589, 0.9979757,
+                    0.9974579, 0.9975684, 0.9930824, 0.9927158, 0.9942642, 0.9969136, 0.9996759, 1, 0.9941596, 0.9801639,
+                    0.9934598, 0.9900031, 0.9819477, 0.9722992, 0.9935854, 0.9761231, 0.9941589, 0.9941596, 1, 0.9891928,
+                    0.9963648, 0.9977911, 0.9889521, 0.9912728, 0.9784983, 0.9923077, 0.9979757, 0.9801639, 0.9891928, 1),
+                  nrow = 10, ncol = 10, byrow = TRUE)
+
+acc_mat
+```
+
+## Bibliography
+
+@ggplot2, @glmnet, @paper
